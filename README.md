@@ -13,6 +13,10 @@
 4. [Spray Responsibly](#spray-responsibly)
     1. [Internal Password Spraying - from Linux](#internal-password-spraying---from-linux)
     2. [Internal Password Spraying - from Windows](#internal-password-spraying---from-windows)
+5. [Deeper Down the Rabbit Hole](#deeper-down-the-rabbit-hole)
+    1. [Credentialed Enumeration - from Linux](#credentialed-enumeration---from-linux)
+    2. [Credentialed Enumeration - from Windows](#credentialed-enumeration---from-windows)
+    3. [Living Off the Land](#living-off-the-land)
 
 ## Initial Enumeration
 ### External Recon and Enumeration Principles
@@ -156,3 +160,84 @@
     Invoke-DomainPasswordSpray -Password Winter2022 -OutFile spray_success -ErrorAction SilentlyContinue
     ```
     The answer is `dbranch`.
+
+## Deeper Down the Rabbit Hole
+### Credentialed Enumeration - from Linux
+#### Tools
+1. rpclient
+2. crackmapexec 
+#### Challenges
+1. What AD User has a RID equal to Decimal 1170?
+
+    Because we can do SMB null session so We can use `rpclient` to solve this.
+
+    ```bash
+    rpcclient -U "" -N 172.16.5.5
+    ```
+    1170 in decismal is equal to 0x492 in hexadecimal. We can type `enumdomusers` and search user with RID 0x492. The answer is `mmorgan`.
+
+2. What is the membercount: of the "Interns" group?
+
+    We can use `crackmapexec` tool with provided credential in the modul, `forend:Klmcargo2`.
+
+    ```bash
+    sudo crackmapexec smb 172.16.5.5 -u forend -p Klmcargo2 --groups | grep Interns
+    ```
+    The answer is `10`.
+
+### Credentialed Enumeration - from Windows
+#### Tools
+1. bloodhound
+2. snaffler
+#### Challenges 
+1. Using Bloodhound, determine how many Kerberoastable accounts exist within the INLANEFREIGHT domain. (Submit the number as the answer)
+
+    First we need to rdp to the target. Then in there, we can run `sharphound.exe`. It will gather all possible information and compress it in the zip file.
+
+    ```powershell
+    .\SharpHound.exe -c All --zipfilename ILFREIGHT
+    ```
+
+    After that, we can run `bloodhound`. Then upload the zip file into it. We can go to analysis tab and select `List All Kerberoastable accounts`. 
+
+    ![alt text](Assets/CredEnumWindows1.png)
+
+    The answer is `13`.
+
+2. What PowerView function allows us to test if a user has administrative access to a local or remote host?
+
+    The answer is already in the module. The answer is `Test-AdminAccess`.
+
+3. Run Snaffler and hunt for a readable web config file. What is the name of the user in the connection string within the file?
+
+    We can solve this by using `snaffler.exe`. 
+
+    ```powershell
+    .\Snaffler.exe -s -d inlanefreight.local -o snaffler.log -v data
+    ```
+    ![alt text](Assets/CredEnumWindows2.png)
+
+    We can see in there, the web config file, its contain user name. The answer is `sa`.
+
+4. What is the password for the database user?
+
+    Based on the previous image, the answer is `ILFREIGHTDB01!`.
+
+### Living Off the Land
+#### Challenges
+1. Enumerate the host's security configuration information and provide its AMProductVersion.
+    
+    We can solve this by typing `Get-MpComputerStatus` in the powershell. The answer is `4.18.2109.6`.
+
+2. What domain user is explicitly listed as a member of the local Administrators group on the target host?
+
+    We can solve this by typing `net localgroup administrators` in the powershell. The answer is `adunn`.
+
+3. Utilizing techniques learned in this section, find the flag hidden in the description field of a disabled account with administrative privileges. Submit the flag as the answer.
+
+    To solve this, we can use dsquery with some filters. It must user account, account disabled, and have administrative privileges. Then it must display username and the description field. 
+
+    ```powershell
+    dsquery * -filter "(&(objectCategory=person)(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=2)(adminCount=1))" -attr sAMAccountName description
+    ```
+    The answer is `HTB{LD@P_I$_W1ld} `.
