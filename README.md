@@ -7,6 +7,9 @@
 2. [Sniffing out a Foothold](#sniffing-out-a-foothold)
     1. [LLMNR/NBT-NS Poisoning - from Linux](#llmnrnbt-ns-poisoning---from-linux)
     2. [LLMNR/NBT-NS Poisoning - from Windows](#llmnrnbt-ns-poisoning---from-windows)
+3. [Sighting In, Hunting For A User](#sighting-in-hunting-for-a-user)
+    1. [Enumerating & Retrieving Password Policies](#enumerating--retrieving-password-policies)
+    2. [Password Spraying - Making a Target User List](#password-spraying---making-a-target-user-list)
 
 ## Initial Enumeration
 ### External Recon and Enumeration Principles
@@ -82,3 +85,38 @@
     xfreerdp /v:10.129.48.82 /u:htb-student /p:Academy_student_AD! /dynamic-resolution
     ```
     Then in the rdp session, go to Tools folder. In there, we can find `inveigh.exe`. After we run it, press `esc` to interact on it. We can type `GET NTLMV2UNIQUE` to get all user with its hash. Then we can use hashcat to crack it. The answer is `security#1`.
+
+## Sighting In, Hunting For A User
+### Enumerating & Retrieving Password Policies
+#### Tools
+1. ldapsearch
+#### Challenges
+1. What is the default Minimum password length when a new domain is created? (One number)
+
+    We can find this answer from the module.
+
+    ![alt text](Assets/EnumPWDPolicies.png)
+
+    The answer is `7`.
+
+2. What is the minPwdLength set to in the INLANEFREIGHT.LOCAL domain? (One number)
+
+    We can use `ldapsearch` to solve this.
+    
+    ```bash
+    ldapsearch -h 172.16.5.5 -x -b "DC=INLANEFREIGHT,DC=LOCAL" -s sub "*" | grep -m 1 -B 10 minPwdLength
+    ```
+    The answer is `8`.
+
+### Password Spraying - Making a Target User List
+#### Tools
+1. kerbrute
+#### Challenges
+1. Enumerate valid usernames using Kerbrute and the wordlist located at /opt/jsmith.txt on the ATTACK01 host. How many valid usernames can we enumerate with just this wordlist from an unauthenticated standpoint?
+
+    We can solve this by using `kerbrute`.
+
+    ```bash
+    kerbrute userenum -d inlanefreight.local --dc 172.16.5.5 /opt/jsmith.txt
+    ```
+    The answer is `56`.
