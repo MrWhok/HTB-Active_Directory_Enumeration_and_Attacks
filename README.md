@@ -36,6 +36,8 @@
 10. [Breaking Down Boundaries](#breaking-down-boundaries)
     1. [Attacking Domain Trusts - Cross-Forest Trust Abuse - from Windows](#attacking-domain-trusts---cross-forest-trust-abuse---from-windows)
     2. [Attacking Domain Trusts - Cross-Forest Trust Abuse - from linux](#attacking-domain-trusts---cross-forest-trust-abuse---from-linux)
+11. [Defensive Considerations](#defensive-considerations)
+    1. [Additional AD Auditing Techniques](#additional-ad-auditing-techniques)
 
 ## Initial Enumeration
 ### External Recon and Enumeration Principles
@@ -783,3 +785,13 @@ With this data collected, the attack can be performed with Mimikatz. Here the an
     evil-winrm -i ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL -u sapsso -p 'pabloPICASSO'
     ```
     Once we logged in, we can read the flag. The answer is `burn1ng_d0wn_th3_f0rest!`.
+
+## Defensive Considerations
+### Additional AD Auditing Techniques
+#### Tools
+1. PingCastle
+2. ADRecon
+3. Group3r
+4. AD Explorer
+
+Those tools can also used for reconnaissance and enumeration phase of Active Directory.
